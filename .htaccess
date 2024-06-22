@@ -1,9 +1,14 @@
-# The <IfModule mod_php.c> directive is used to apply settings only if the mod_php.c module is enabled.
-# This module is responsible for handling PHP on the server.
-# The following configurations set various PHP performance and security settings.
+# Protect the .htaccess file
+<Files .htaccess>
+    Order Allow,Deny
+    Deny from all
+</Files>
+
+# Prevent directory listing
+Options -Indexes -ExecCGI -MultiViews
+
 <IfModule mod_php.c>
     # PHP memory limits and input settings
-    # These settings define the memory limits and maximum input parameters allowed by PHP scripts.
     php_value memory_limit 512M
     php_value max_execution_time 3600
     php_value max_input_time 3600
@@ -12,7 +17,6 @@
     php_value post_max_size 256M
     
     # PHP opcode cache settings
-    # These settings configure the opcode cache to improve performance by caching compiled scripts.
     php_value opcache.enable 1
     php_value opcache.memory_consumption 256
     php_value opcache.interned_strings_buffer 16
@@ -23,21 +27,26 @@
     php_value opcache.enable_cli 0
     
     # Enable output compression and set compression level
-    # These settings enable and configure output compression to reduce the size of served content.
     php_value zlib.output_compression On
     php_value zlib.output_compression_level 4
     
     # PHP error reporting and logging settings
-    # These settings configure how PHP handles error reporting and logging.
     php_value error_reporting E_ALL & ~E_DEPRECATED & ~E_STRICT & ~E_NOTICE
     php_value log_errors On
     php_value display_errors Off
 </IfModule>
 
 <IfModule mod_rewrite.c>
-    # Enable the rewrite engine and set the base URL
+    Options -MultiViews
     RewriteEngine On
     RewriteBase /
+
+    # Custom rewrite rule
+    RewriteRule ^podpis/(\d+)/([0-1]).png$ podpis.php?id=$1&avatar=$2 [L]
+
+    # Handle requests for missing files
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule \.(js|css|jpeg|jpg|gif|png|ico|map|webp)(\?|$) /404error.php [L,NC]
 
     # Ensure HTTPS is enabled
     RewriteCond %{HTTPS} off
@@ -47,32 +56,21 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule . /index.php [L]
+
+    # Block common bots and scrapers
+    RewriteCond %{HTTP_USER_AGENT} ^.*(curl|python|wget|libwww-perl).*$ [NC]
+    RewriteRule .* - [F,L]
+
+    # Block access from specific countries
+    SetEnvIf GEOIP_COUNTRY_CODE CN BlockCountry
+    SetEnvIf GEOIP_COUNTRY_CODE RU BlockCountry
+    SetEnvIf GEOIP_COUNTRY_CODE IR BlockCountry
+    SetEnvIf GEOIP_COUNTRY_CODE NG BlockCountry
+    SetEnvIf GEOIP_COUNTRY_CODE BR BlockCountry
+    Deny from env=BlockCountry
 </IfModule>
 
-# Disable directory listings, CGI execution, and multi-view options
-Options -Indexes -ExecCGI -MultiViews
-
-# Deny access to sensitive files
-<FilesMatch "\.(htaccess|htpasswd|ini|phps|fla|psd|log|sh)$">
-    Require all denied
-</FilesMatch>
-
-# Enable compression for specified text and application types
-<IfModule mod_deflate.c>
-    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css application/xml application/xhtml+xml application/rss+xml application/javascript application/x-javascript
-    BrowserMatch ^Mozilla/4 gzip-only-text/html
-    BrowserMatch ^Mozilla/4\.0[678] no-gzip
-    BrowserMatch \bMSIE !no-gzip !gzip-only-text/html
-    Header append Vary User-Agent
-    AddOutputFilterByType DEFLATE application/json
-    AddOutputFilterByType DEFLATE application/ld+json
-    AddOutputFilterByType DEFLATE application/xml
-    AddOutputFilterByType DEFLATE text/xml
-    AddOutputFilterByType DEFLATE application/x-font-ttf
-    AddOutputFilterByType DEFLATE font/opentype
-</IfModule>
-
-# Set expiration times for various content types
+# Enable browser caching for images and other static files
 <IfModule mod_expires.c>
     ExpiresActive On
     ExpiresByType image/jpg "access plus 1 year"
@@ -85,15 +83,37 @@ Options -Indexes -ExecCGI -MultiViews
     ExpiresByType application/x-shockwave-flash "access plus 1 month"
     ExpiresByType image/x-icon "access plus 1 year"
     ExpiresByType image/svg+xml "access plus 1 year"
+    ExpiresByType application/json "access plus 1 week"
+    ExpiresByType application/x-font-ttf "access plus 1 month"
+    ExpiresByType font/woff "access plus 1 month"
+    ExpiresByType font/woff2 "access plus 1 month"
     ExpiresDefault "access plus 2 days"
 </IfModule>
 
-# Set security headers to improve security
-<IfModule mod_headers.c>
-    Header set X-Content-Type-Options "nosniff"
-    Header set X-Frame-Options "SAMEORIGIN"
-    Header set X-XSS-Protection "1; mode=block"
-    Header always append X-Frame-Options SAMEORIGIN
-    Header set Referrer-Policy "no-referrer-when-downgrade"
-    Header set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+# Enable gzip compression
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/x-javascript application/xml application/rss+xml application/json application/ld+json application/atom+xml application/xhtml+xml application/x-font-ttf font/opentype font/ttf font/woff font/woff2
+
+    # Don't compress already-compressed files
+    SetEnvIfNoCase Request_URI \.(?:gif|jpe?g|png|ico|swf|flv|pdf|exe|t?gz|zip|bz2|sit|rar|eot|otf|woff|woff2|ttf|css|js)\.gz$ no-gzip dont-vary
+
+    # Handle browsers that can't handle compression
+    BrowserMatch ^Mozilla/4 gzip-only-text/html
+    BrowserMatch ^Mozilla/4\.0[678] no-gzip
+    BrowserMatch \bMSIE !no-gzip !gzip-only-text/html
+    Header append Vary User-Agent
 </IfModule>
+
+# Security headers
+<IfModule mod_headers.c>
+    Header set X-XSS-Protection "1; mode=block"
+    Header set X-Content-Type-Options "nosniff"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set X-Frame-Options "SAMEORIGIN"
+</IfModule>
+
+# Deny access to sensitive files
+<FilesMatch "\.(htaccess|htpasswd|ini|phps|fla|psd|log|sh)$">
+    Require all denied
+</FilesMatch>
